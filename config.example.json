@@ -1,0 +1,19 @@
+{
+  "source_channel_id": "111111111111111111",
+  "address_field": "Delivered To",
+  "routes": [
+    {
+      "channel_id": "222222222222222222",
+      "addresses": [
+        "123 Example Street, Apt 4, Example City, NY 10001",
+        "123 Example St, Apt 4, Example City, NY 10001"
+      ]
+    },
+    {
+      "channel_id": "333333333333333333",
+      "addresses": [
+        "456 Sample Avenue, Example City, NY 10002"
+      ]
+    }
+  ]
+}
