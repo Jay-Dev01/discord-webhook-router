@@ -31,7 +31,8 @@ Both modes ignore capitalization, common Discord formatting, commas, periods,
 and extra spaces. Only the configured address field is searched.
 Rules apply only to messages in the channel where `/add` was used. They activate
 immediately and save to `config.json` for restarts. Replies are private.
-To remove or change a rule, edit its entry in `config.json` and restart the bot.
+To remove a rule, use `/delete` as described below. To change a rule, delete it
+and add its replacement.
 Restart after updating the bot so Discord receives the new `/add` options.
 Previously saved webhook routes remain supported; keep their URLs private.
 
@@ -51,6 +52,24 @@ full-address or webhook routes. Webhook URLs and tokens are never included.
 You need **Manage Channels** in the channel where you run the command.
 The reply is private; large configurations are attached as `routes.txt` so
 no addresses are cut off. Viewing routes does not change them.
+
+## Delete a rule
+
+Run `/delete` in the rule's **source channel**, using its destination channel
+ID, match value, and mode from `/routes`:
+
+```text
+/delete channel_id:222222222222222222 value:08882 mode:keyword
+/delete channel_id:222222222222222222 value:123 Main St mode:strict
+```
+
+The mode defaults to `keyword`. Use `mode:full` for legacy full-address rules;
+only the specified address is removed, leaving other addresses for that
+destination intact. Matching uses the same capitalization and formatting
+normalization as routing. Rules in other source channels are unchanged.
+You need **Manage Channels**. Replies are private; successful deletions take
+effect immediately and are saved across restarts. A missing match changes
+nothing. Use `/add` to restore a keyword or strict rule if needed.
 
 ## Setup (Windows / PowerShell)
 

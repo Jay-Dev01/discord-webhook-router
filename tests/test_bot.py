@@ -293,6 +293,89 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(command.default_permissions.manage_channels)
         self.assertTrue(command.guild_only)
 
+    async def test_delete_removes_only_exact_source_destination_and_mode_and_persists(self):
+        interaction = self.prepare_command()
+        rules = [
+            {"source_channel_id": source, "channel_id": "2", "mode": mode, "value": "South River"}
+            for source, mode in (("4", "keyword"), ("1", "keyword"), ("4", "strict"))
+        ]
+        self.bot.config = webhook_config(*rules)
+        with tempfile.TemporaryDirectory() as folder:
+            self.bot.config_path = Path(folder) / "config.json"
+            await self.bot.delete_route(interaction, "2", "**SOUTH RIVER**")
+            restored = RoutingConfig.from_dict(json.loads(self.bot.config_path.read_text()))
+        self.assertEqual(restored.data["routes"], rules[1:])
+        self.assertEqual(self.bot.config.data, restored.data)
+        sent = interaction.followup.send.call_args
+        self.assertIn("Deleted keyword rule", sent.args[0])
+        self.assertTrue(sent.kwargs["ephemeral"])
+        self.assertEqual(sent.kwargs["allowed_mentions"].to_dict()["parse"], [])
+
+    async def test_delete_legacy_address_preserves_other_addresses_and_removes_empty_route(self):
+        interaction = self.prepare_command()
+        interaction.channel_id = 1
+        self.bot.config = config()
+        self.bot.save_config = Mock()
+        await self.bot.delete_route(interaction, "2", "123 MAIN ST., APT 4", "full")
+        self.assertEqual(self.bot.config.data["routes"][0]["addresses"], ["123 Main Street, Apt 4"])
+        await self.bot.delete_route(interaction, "2", "123 Main Street, Apt 4", "full")
+        self.assertEqual(len(self.bot.config.data["routes"]), 1)
+        self.assertEqual(self.bot.config.data["routes"][0]["channel_id"], "3")
+
+    async def test_delete_supports_webhook_rules_without_exposing_credentials(self):
+        interaction = self.prepare_command()
+        self.bot.config = webhook_config(webhook_rule(source="4"))
+        self.bot.save_config = Mock()
+        await self.bot.delete_route(interaction, "2", "08882")
+        self.assertEqual(self.bot.config.rules, [])
+        self.assertNotIn("test_token", interaction.followup.send.call_args.args[0])
+
+    async def test_delete_failed_save_preserves_active_rules(self):
+        interaction = self.prepare_command()
+        self.bot.config = webhook_config(webhook_rule(source="4"))
+        original = self.bot.config
+        self.bot.save_config = Mock(side_effect=OSError("disk full"))
+        await self.bot.delete_route(interaction, "2", "08882")
+        self.assertIs(self.bot.config, original)
+        self.assertEqual(len(self.bot.config.rules), 1)
+        self.assertIn("No rule was deleted", interaction.followup.send.call_args.args[0])
+
+    async def test_delete_missing_match_or_invalid_input_does_not_write(self):
+        for destination, value, mode in (("3", "08882", "keyword"), ("2", "08882", "strict"),
+                                         ("2", "missing", "keyword"), ("invalid", "08882", "keyword"),
+                                         ("2", "***", "keyword")):
+            with self.subTest(destination=destination, value=value, mode=mode):
+                interaction = self.prepare_command()
+                self.bot.config = webhook_config(webhook_rule(source="4"))
+                original = self.bot.config
+                self.bot.save_config = Mock()
+                await self.bot.delete_route(interaction, destination, value, mode)
+                self.bot.save_config.assert_not_called()
+                self.assertIs(self.bot.config, original)
+
+    async def test_delete_rejects_unauthorized_wrong_server_and_startup(self):
+        for denied in ("permission", "server", "startup"):
+            with self.subTest(denied=denied):
+                interaction = self.prepare_command()
+                self.bot.config = webhook_config(webhook_rule(source="4"))
+                self.bot.routing_ready = denied != "startup"
+                interaction.permissions.manage_channels = denied != "permission"
+                interaction.guild_id = 20 if denied == "server" else 10
+                self.bot.save_config = Mock()
+                await self.bot.delete_route(interaction, "2", "08882")
+                self.bot.save_config.assert_not_called()
+                self.assertEqual(len(self.bot.config.rules), 1)
+                if denied == "permission":
+                    self.bot.get_text_channel.assert_not_awaited()
+
+    async def test_delete_command_schema(self):
+        command = self.bot.tree.get_command("delete")
+        self.assertEqual([p.name for p in command.parameters], ["channel_id", "value", "mode"])
+        self.assertEqual([c.value for c in command.parameters[2].choices], ["keyword", "strict", "full"])
+        self.assertEqual(command.parameters[2].default, "keyword")
+        self.assertTrue(command.default_permissions.manage_channels)
+        self.assertTrue(command.guild_only)
+
 
 if __name__ == "__main__":
     unittest.main()

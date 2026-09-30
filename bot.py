@@ -16,7 +16,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 from config_store import load_config, save_config
-from routing import RoutingConfig, WebhookTarget, channel_id as parse_channel_id
+from routing import RoutingConfig, WebhookTarget, channel_id as parse_channel_id, normalize
 
 BASE = Path(__file__).resolve().parent
 LOG = logging.getLogger("address_router")
@@ -40,6 +40,10 @@ class AddressRouter(discord.Client):
         self.tree.add_command(app_commands.Command(
             name="routes", description="View all address rules and their source and destination channels.",
             callback=self.list_routes,
+        ))
+        self.tree.add_command(app_commands.Command(
+            name="delete", description="Remove an address rule from this source channel.",
+            callback=self.delete_route,
         ))
         self.routing_ready = False
         self.lock = asyncio.Lock()
@@ -105,6 +109,68 @@ class AddressRouter(discord.Client):
         await interaction.followup.send(
             f"Saved {mode} rule for <#{source.id}> → <#{destination.id}>. It is active now.",
             ephemeral=True,
+        )
+
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_channels=True)
+    @app_commands.describe(channel_id="Destination channel ID of the rule to remove",
+                           value="Existing keyword or address shown by /routes",
+                           mode="Match mode of the rule; full is for legacy full-address rules")
+    async def delete_route(self, interaction: discord.Interaction, channel_id: str, value: str,
+                           mode: Literal["keyword", "strict", "full"] = "keyword"):
+        if not interaction.permissions.manage_channels:
+            await interaction.response.send_message("You need Manage Channels to delete routes.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            if not self.routing_ready:
+                raise ValueError("The router is still starting. Try again shortly.")
+            intake = await self.get_text_channel(self.config.source_channel_id)
+            if interaction.guild_id != intake.guild.id:
+                raise ValueError("Use this command in the configured intake server.")
+            destination = parse_channel_id(channel_id.strip())
+            match = normalize(value)
+            if not match:
+                raise ValueError("Enter the existing keyword or address shown by /routes.")
+            async with self.lock:
+                data = deepcopy(self.config.data)
+                remaining = []
+                removed = False
+                for route in data["routes"]:
+                    source = int(route.get("source_channel_id", self.config.source_channel_id))
+                    route_mode = route.get("mode", "keyword") if "value" in route else "full"
+                    if (source != interaction.channel_id or int(route["channel_id"]) != destination
+                            or route_mode != mode):
+                        remaining.append(route)
+                    elif "value" in route:
+                        if normalize(route["value"]) == match:
+                            removed = True
+                        else:
+                            remaining.append(route)
+                    else:
+                        addresses = [address for address in route["addresses"] if normalize(address) != match]
+                        removed |= len(addresses) != len(route["addresses"])
+                        if addresses:
+                            route["addresses"] = addresses
+                            remaining.append(route)
+                if not removed:
+                    raise ValueError("No matching rule in this source channel. Check /routes for its destination, value, and mode.")
+                data["routes"] = remaining
+                updated = RoutingConfig.from_dict(data)
+                self.save_config(updated)
+                self.config = updated
+        except ValueError as error:
+            await interaction.followup.send(str(error), ephemeral=True)
+            return
+        except discord.HTTPException:
+            await interaction.followup.send("Could not verify the intake server. No rule was deleted.", ephemeral=True)
+            return
+        except (OSError, aiohttp.ClientError):
+            await interaction.followup.send("Could not save or verify the change. No rule was deleted; try again.", ephemeral=True)
+            return
+        await interaction.followup.send(
+            f"Deleted {mode} rule for <#{interaction.channel_id}> → <#{destination}>. The change is active now.",
+            ephemeral=True, allowed_mentions=discord.AllowedMentions.none(),
         )
 
     @app_commands.guild_only()
