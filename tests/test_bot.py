@@ -195,6 +195,104 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([c.value for c in command.parameters[2].choices], ["keyword", "strict"])
         self.assertTrue(command.default_permissions.manage_channels)
 
+    async def test_routes_lists_all_sources_modes_and_legacy_addresses_without_secrets(self):
+        interaction = self.prepare_command()
+        data = config().data
+        data["routes"].extend([
+            {"source_channel_id": "4", "channel_id": "5", "mode": "strict", "value": "456 Oak St"},
+            webhook_rule(),
+        ])
+        self.bot.config = RoutingConfig.from_dict(data)
+        self.bot.save_config = Mock()
+        await self.bot.list_routes(interaction)
+        sent = interaction.followup.send.call_args
+        report = sent.args[0]
+        for expected in ("5 configured address rules", "Delivered To", "<\u00231> → <\u00232>",
+                         "<\u00234> → <\u00235>", "123 Main St, Apt 4", "123 Main Street, Apt 4",
+                         "123 Main St, Apt 5", "456 Oak St", "08882", "strict", "keyword",
+                         "full address", "legacy webhook"):
+            self.assertIn(expected, report)
+        self.assertNotIn(WEBHOOK, report)
+        self.assertNotIn("test_token", report)
+        self.assertTrue(sent.kwargs["ephemeral"])
+        self.assertEqual(sent.kwargs["allowed_mentions"].to_dict()["parse"], [])
+        interaction.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
+        self.bot.save_config.assert_not_called()
+        self.assertEqual(self.bot.config.data, data)
+
+    async def test_routes_handles_empty_configuration(self):
+        interaction = self.prepare_command()
+        await self.bot.list_routes(interaction)
+        report = interaction.followup.send.call_args.args[0]
+        self.assertIn("No routes configured", report)
+        self.assertIn("/add", report)
+        self.assertIn("<#1>", report)
+
+    async def test_routes_rejects_unauthorized_or_wrong_server_requests(self):
+        interaction = self.prepare_command()
+        interaction.permissions.manage_channels = False
+        await self.bot.list_routes(interaction)
+        self.bot.get_text_channel.assert_not_awaited()
+        interaction.followup.send.assert_not_awaited()
+        self.assertTrue(interaction.response.send_message.call_args.kwargs["ephemeral"])
+
+        interaction = self.prepare_command()
+        interaction.guild_id = 20
+        await self.bot.list_routes(interaction)
+        self.assertEqual(interaction.followup.send.call_args.args[0],
+                         "Use this command in the configured intake server.")
+
+    async def test_routes_handles_startup_and_channel_lookup_failure(self):
+        interaction = self.prepare_command()
+        self.bot.routing_ready = False
+        await self.bot.list_routes(interaction)
+        self.assertIn("still starting", interaction.followup.send.call_args.args[0])
+        self.bot.get_text_channel.assert_not_awaited()
+
+        self.bot.routing_ready = True
+        self.bot.get_text_channel.side_effect = discord.HTTPException(
+            SimpleNamespace(status=403, reason="Forbidden"), "Missing permissions")
+        await self.bot.list_routes(interaction)
+        self.assertIn("Could not verify", interaction.followup.send.call_args.args[0])
+
+    async def test_routes_attaches_complete_large_report_and_closes_file(self):
+        interaction = self.prepare_command()
+        values = [f"{n} Maple St " + "😀" * 100 for n in range(30)]
+        self.bot.config = RoutingConfig.from_dict({"source_channel_id": "1", "routes": [
+            {"channel_id": "2", "addresses": values}, webhook_rule(),
+        ]})
+        captured = {}
+
+        async def capture(*args, **kwargs):
+            captured["report"] = kwargs["file"].fp.read().decode("utf-8")
+            captured["file"] = kwargs["file"]
+
+        interaction.followup.send.side_effect = capture
+        await self.bot.list_routes(interaction)
+        for value in values:
+            self.assertIn(value, captured["report"])
+        self.assertIn("08882", captured["report"])
+        self.assertNotIn("test_token", captured["report"])
+        self.assertEqual(captured["file"].filename, "routes.txt")
+        self.assertTrue(captured["file"].fp.closed)
+        self.assertTrue(interaction.followup.send.call_args.kwargs["ephemeral"])
+        interaction.followup.send.assert_awaited_once()
+
+    async def test_routes_escapes_user_formatting_and_disables_mentions(self):
+        interaction = self.prepare_command()
+        self.bot.config = webhook_config(webhook_rule("**08882** @everyone\nnext line"))
+        await self.bot.list_routes(interaction)
+        sent = interaction.followup.send.call_args
+        self.assertIn(r"\*\*08882\*\*", sent.args[0])
+        self.assertIn(r"\nnext line", sent.args[0])
+        self.assertEqual(sent.kwargs["allowed_mentions"].to_dict()["parse"], [])
+
+    async def test_routes_command_schema(self):
+        command = self.bot.tree.get_command("routes")
+        self.assertEqual(command.parameters, [])
+        self.assertTrue(command.default_permissions.manage_channels)
+        self.assertTrue(command.guild_only)
+
 
 if __name__ == "__main__":
     unittest.main()

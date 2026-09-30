@@ -42,6 +42,16 @@ Destination channels must belong to the same server and cannot be a watched
 channel. The bot checks its destination permissions before saving a rule.
 Duplicate rules are rejected.
 
+## View routing configuration
+
+Run `/routes` in your configured server to see every saved address rule, its
+match mode, source channel, and destination channel, plus the address field
+being searched. This includes rules from all intake channels and legacy
+full-address or webhook routes. Webhook URLs and tokens are never included.
+You need **Manage Channels** in the channel where you run the command.
+The reply is private; large configurations are attached as `routes.txt` so
+no addresses are cut off. Viewing routes does not change them.
+
 ## Setup (Windows / PowerShell)
 
 1. Create an application at <https://discord.com/developers/applications>.

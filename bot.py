@@ -1,6 +1,8 @@
 """Copy incoming webhook messages to channels selected by delivery address."""
 
 import asyncio
+import io
+import json
 import logging
 import os
 from collections import deque
@@ -34,6 +36,10 @@ class AddressRouter(discord.Client):
         self.tree.add_command(app_commands.Command(
             name="add", description="Forward this channel's matching deliveries to a destination channel.",
             callback=self.add_route,
+        ))
+        self.tree.add_command(app_commands.Command(
+            name="routes", description="View all address rules and their source and destination channels.",
+            callback=self.list_routes,
         ))
         self.routing_ready = False
         self.lock = asyncio.Lock()
@@ -100,6 +106,62 @@ class AddressRouter(discord.Client):
             f"Saved {mode} rule for <#{source.id}> → <#{destination.id}>. It is active now.",
             ephemeral=True,
         )
+
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_channels=True)
+    async def list_routes(self, interaction: discord.Interaction):
+        if not interaction.permissions.manage_channels:
+            await interaction.response.send_message("You need Manage Channels to view routes.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        if not self.routing_ready:
+            await interaction.followup.send("The router is still starting. Try again shortly.", ephemeral=True)
+            return
+        try:
+            intake = await self.get_text_channel(self.config.source_channel_id)
+        except (discord.HTTPException, ValueError, aiohttp.ClientError):
+            await interaction.followup.send("Could not verify the intake server. Try again shortly.", ephemeral=True)
+            return
+        if interaction.guild_id != intake.guild.id:
+            await interaction.followup.send("Use this command in the configured intake server.", ephemeral=True)
+            return
+
+        # Only export routing fields, never the saved webhook credentials.
+        config = self.config
+        lines = ["Routing configuration",
+                 f"Initial intake: <#{config.source_channel_id}>",
+                 "Address field: " + json.dumps(config.data.get("address_field", "Delivered To"), ensure_ascii=False)]
+        count = 0
+        for route in config.data["routes"]:
+            source = int(route.get("source_channel_id", config.source_channel_id))
+            destination = int(route["channel_id"])
+            mode = route.get("mode", "keyword") if "value" in route else "full address"
+            values = [route["value"]] if "value" in route else route["addresses"]
+            delivery = " (legacy webhook)" if "webhook_url" in route else ""
+            for value in values:
+                count += 1
+                lines.append(f"\n{count}. <#{source}> → <#{destination}>{delivery}\n"
+                             f"Match ({mode}): {json.dumps(value, ensure_ascii=False)}")
+        lines.insert(1, f"{count} configured address rules")
+        if not count:
+            lines.append("\nNo routes configured yet. Use /add in a source channel to create one.")
+        report = "\n".join(lines)
+        content = discord.utils.escape_markdown(report)
+        # Discord limits message content to 2,000 characters. Keep the full
+        # report available without truncating addresses or sending many replies.
+        if len(content.encode("utf-16-le")) // 2 <= 2000:
+            await interaction.followup.send(content, ephemeral=True,
+                                            allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
+        else:
+            with io.BytesIO(report.encode("utf-8")) as buffer:
+                file = discord.File(buffer, filename="routes.txt")
+                try:
+                    await interaction.followup.send(
+                        f"{count} configured address rules. The complete list is attached (channel IDs appear as <#ID>).",
+                        file=file, ephemeral=True, allowed_mentions=discord.AllowedMentions.none(),
+                    )
+                finally:
+                    file.close()
 
     async def get_text_channel(self, ident: int) -> discord.TextChannel:
         channel = self.get_channel(ident) or await self.fetch_channel(ident)
