@@ -196,7 +196,8 @@ class AddressRouter(discord.Client):
         config = self.config
         lines = ["Routing configuration",
                  f"Initial intake: <#{config.source_channel_id}>",
-                 "Address field: " + json.dumps(config.data.get("address_field", "Delivered To"), ensure_ascii=False)]
+                 "Address fields: " + ", ".join(json.dumps(name, ensure_ascii=False)
+                                               for name in config.address_field_names)]
         count = 0
         for route in config.data["routes"]:
             source = int(route.get("source_channel_id", config.source_channel_id))

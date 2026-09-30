@@ -47,6 +47,16 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         await self.bot.on_message(self.message)
         self.destination.send.assert_not_awaited()
 
+    async def test_shipping_address_keyword_forwards_original_embed(self):
+        self.bot.config = RoutingConfig.from_dict({"source_channel_id": "1", "address_field": "Delivered To",
+            "routes": [{"channel_id": "2", "mode": "keyword", "value": "witherspoon"}]})
+        self.message.embeds[0].set_field_at(0, name="Shipping Address", value="123 Witherspoon Ave")
+        await self.bot.on_message(self.message)
+        self.bot.get_text_channel.assert_awaited_once_with(2)
+        self.destination.send.assert_awaited_once()
+        self.assertEqual(self.destination.send.call_args.kwargs["embeds"][0].to_dict(),
+                         self.message.embeds[0].to_dict())
+
     async def test_other_channel_ignored(self):
         self.message.channel.id = 500
         await self.bot.on_message(self.message)
@@ -207,6 +217,8 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         await self.bot.list_routes(interaction)
         sent = interaction.followup.send.call_args
         report = sent.args[0]
+        self.assertIn("Address fields:", report)
+        self.assertIn("Shipping Address", report)
         for expected in ("5 configured address rules", "Delivered To", "<\u00231> → <\u00232>",
                          "<\u00234> → <\u00235>", "123 Main St, Apt 4", "123 Main Street, Apt 4",
                          "123 Main St, Apt 5", "456 Oak St", "08882", "strict", "keyword",

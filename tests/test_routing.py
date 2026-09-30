@@ -30,6 +30,46 @@ def config():
 
 
 class RoutingTests(unittest.TestCase):
+    def test_keyword_matches_both_standard_labels_with_existing_configs(self):
+        for configured in (None, "Delivered To", "Shipping Address", "Destination"):
+            data = webhook_config(webhook_rule("witherspoon")).data
+            if configured is not None:
+                data["address_field"] = configured
+            cfg = RoutingConfig.from_dict(data)
+            for label in ("Delivered To", "Shipping Address", "**SHIPPING ADDRESS**:"):
+                with self.subTest(configured=configured, label=label):
+                    self.assertEqual(cfg.resolve([embed("123 Witherspoon Ave, Example City", label)]),
+                                     (WebhookTarget(WEBHOOK, 2), "matched"))
+            self.assertEqual(cfg.data, data)
+
+    def test_custom_address_field_remains_supported(self):
+        data = config().data
+        data["address_field"] = "Destination:"
+        cfg = RoutingConfig.from_dict(data)
+        self.assertEqual(cfg.resolve([embed("123 Main St, Apt 4", "**DESTINATION**:")]), (2, "matched"))
+        self.assertEqual(cfg.resolve([embed("123 Main St, Apt 4", "Billing Address")]),
+                         (None, "missing address field"))
+
+    def test_shipping_address_supports_strict_mode(self):
+        cfg = webhook_config(webhook_rule("123 Main St", "strict"))
+        self.assertEqual(cfg.resolve([embed("123 MAIN ST.\nExample City", "Shipping Address")]),
+                         (WebhookTarget(WEBHOOK, 2), "matched"))
+        self.assertEqual(cfg.resolve([embed("123 Main St Apt 4\nExample City", "Shipping Address")]),
+                         (None, "unmatched address"))
+
+    def test_both_labels_in_same_message_must_resolve_to_same_destination(self):
+        for second_address, expected in (
+            ("123 Main St, Apt 4", (2, "matched")),
+            ("123 Main St, Apt 5", (None, "multiple destination channels in one message")),
+            ("Unknown", (None, "unmatched address")),
+        ):
+            for separate_cards in (False, True):
+                with self.subTest(address=second_address, separate_cards=separate_cards):
+                    cards = [embed("123 Main St, Apt 4"), embed(second_address, "Shipping Address")]
+                    if not separate_cards:
+                        cards = [{"fields": cards[0]["fields"] + cards[1]["fields"]}]
+                    self.assertEqual(config().resolve(cards), expected)
+
     def test_channel_rules_support_both_modes(self):
         for mode, value, address in (("keyword", "08882", "123 Main St\nSouth River NJ 08882"),
                                      ("strict", "123 Main St", "123 MAIN ST.\nSouth River NJ 08882")):

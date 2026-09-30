@@ -1,7 +1,7 @@
 # Discord address router
 
 Watches Discord text channels for incoming webhook messages. Reads the
-`Delivered To` embed field and forwards the content, embeds, and attachments
+`Delivered To` and `Shipping Address` embed fields and forwards the content, embeds, and attachments
 to a destination channel using keyword or strict first-line address rules.
 Add rules with `/add` in the channel receiving the incoming messages.
 Copies appear under the bot's name. Existing full-address routes still work.
@@ -28,7 +28,9 @@ channel, and choose **Copy Channel ID**. Use that ID in the command:
   what strict mode checks.
 
 Both modes ignore capitalization, common Discord formatting, commas, periods,
-and extra spaces. Only the configured address field is searched.
+and extra spaces. Both `Delivered To` and `Shipping Address` are searched
+automatically, along with any custom field named by `address_field` in the config.
+Existing configurations support both standard labels without changes.
 Rules apply only to messages in the channel where `/add` was used. They activate
 immediately and save to `config.json` for restarts. Replies are private.
 To remove a rule, use `/delete` as described below. To change a rule, delete it
@@ -46,7 +48,7 @@ Duplicate rules are rejected.
 ## View routing configuration
 
 Run `/routes` in your configured server to see every saved address rule, its
-match mode, source channel, and destination channel, plus the address field
+match mode, source channel, and destination channel, plus the address fields
 being searched. This includes rules from all intake channels and legacy
 full-address or webhook routes. Webhook URLs and tokens are never included.
 You need **Manage Channels** in the channel where you run the command.
@@ -112,7 +114,8 @@ addresses can go to the same channel. Add alternate spellings as separate entrie
 in that list (for example `Street` and `St`). Matching ignores capitalization,
 commas, periods, common Discord text formatting, extra spaces, and line breaks.
 It keeps unit numbers and other address details; it does not use partial or fuzzy
-matching. If your provider uses another field label, change `address_field`.
+matching. If your provider uses another field label, set `address_field` to that
+label; `Delivered To` and `Shipping Address` remain supported too.
 
 Unknown/missing addresses are skipped and logged by message ID, without logging
 the address itself. A message with address fields for multiple destinations is
@@ -164,8 +167,9 @@ Hosting may require a paid plan.
   configuration manually. Run one instance for the configured server; `/add`
   can configure additional intake channels in that server.
 
-The screenshot is assumed to be a real Discord embed with a `Delivered To` field,
-not a screenshot uploaded as an image. Confirm that field with a live webhook.
+Addresses must be text in real Discord embed fields (`Delivered To`,
+`Shipping Address`, or the configured custom label), not screenshots uploaded
+as images.
 
 ## Local checks
 

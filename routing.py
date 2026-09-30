@@ -61,6 +61,13 @@ class RoutingConfig:
     data: dict = field(repr=False)
 
     @property
+    def address_field_names(self) -> tuple[str, ...]:
+        names = ("Delivered To", "Shipping Address")
+        if self.address_field not in {normalize(name) for name in names}:
+            names += (self.data.get("address_field", self.address_field),)
+        return names
+
+    @property
     def source_ids(self) -> set[int]:
         return {self.source_channel_id} | {rule.source for rule in self.rules}
 
@@ -119,11 +126,12 @@ class RoutingConfig:
 
     def resolve(self, embeds: list[dict], source_id: int | None = None) -> tuple[int | WebhookTarget | None, str]:
         source_id = self.source_channel_id if source_id is None else source_id
+        address_fields = {normalize(name.rstrip(":")) for name in self.address_field_names}
         addresses = {
             field.get("value", "")
             for embed in embeds
             for field in embed.get("fields", [])
-            if normalize(field.get("name", "").rstrip(":")) == self.address_field
+            if normalize(field.get("name", "").rstrip(":")) in address_fields
         }
         if not addresses:
             return None, "missing address field"
